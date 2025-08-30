@@ -12,71 +12,65 @@ import {
   CardContent,
   CardFooter,
 } from '../../components/ui/card';
+import { useAuth } from '@/app/contexts/auth';
+import { createClient } from '@/lib/supabase/client';
 
 interface Poll {
   id: string;
   question: string;
   totalVotes: number;
-  createdAt: string;
+  created_at: string;
+  user_id: string;
 }
 
 export default function DashboardPage() {
   const searchParams = useSearchParams();
   const createdPoll = searchParams.get('created');
+  const { user } = useAuth();
+  const supabase = createClient();
   
   const [polls, setPolls] = useState<Poll[]>([]);
   const [loading, setLoading] = useState(true);
-  
+
   useEffect(() => {
-    // In a real app, this would fetch from Supabase
-    // For now, we'll use mock data
-    const mockPolls: Poll[] = [
-      {
-        id: '1',
-        question: 'What is your favorite programming language?',
-        totalVotes: 120,
-        createdAt: new Date().toISOString(),
-      },
-      {
-        id: '2',
-        question: 'Which frontend framework do you prefer?',
-        totalVotes: 85,
-        createdAt: new Date(Date.now() - 86400000).toISOString(), // 1 day ago
-      },
-      {
-        id: '3',
-        question: 'How often do you deploy to production?',
-        totalVotes: 42,
-        createdAt: new Date(Date.now() - 172800000).toISOString(), // 2 days ago
-      },
-    ];
+    async function fetchPolls() {
+      if (!user) return;
+      try {
+        const { data, error } = await supabase
+          .from('polls')
+          .select('id, question, created_at, user_id, poll_options(*)')
+          .eq('user_id', user.id)
+          .order('created_at', { ascending: false });
+        
+        if (error) throw error;
+
+        const pollsWithVotes = data.map(poll => ({
+          ...poll,
+          totalVotes: poll.poll_options.reduce((acc, option) => acc + (option.votes || 0), 0)
+        }));
+
+        setPolls(pollsWithVotes || []);
+      } catch (error) {
+        console.error('Error fetching polls:', error);
+      } finally {
+        setLoading(false);
+      }
+    }
     
-    // Simulate API delay
-    setTimeout(() => {
-      setPolls(mockPolls);
-      setLoading(false);
-    }, 500);
-    
-    // TODO: Replace with actual Supabase fetch
-    // async function fetchPolls() {
-    //   try {
-    //     const { data, error } = await supabase
-    //       .from('polls')
-    //       .select('id, question, created_at, total_votes')
-    //       .eq('created_by', user.id)
-    //       .order('created_at', { ascending: false });
-    //     
-    //     if (error) throw error;
-    //     setPolls(data || []);
-    //   } catch (error) {
-    //     console.error('Error fetching polls:', error);
-    //   } finally {
-    //     setLoading(false);
-    //   }
-    // }
-    // 
-    // fetchPolls();
-  }, []);
+    fetchPolls();
+  }, [user, supabase]);
+
+  const handleDelete = async (pollId: string) => {
+    if (!confirm('Are you sure you want to delete this poll?')) return;
+
+    try {
+      const { error } = await supabase.from('polls').delete().eq('id', pollId);
+      if (error) throw error;
+      setPolls(polls.filter(p => p.id !== pollId));
+    } catch (error) {
+      console.error('Error deleting poll:', error);
+    }
+  }
   
   return (
     <div className="space-y-6">
@@ -104,7 +98,7 @@ export default function DashboardPage() {
               <CardHeader>
                 <CardTitle className="line-clamp-2">{poll.question}</CardTitle>
                 <CardDescription>
-                  Created {new Date(poll.createdAt).toLocaleDateString()}
+                  Created {new Date(poll.created_at).toLocaleDateString()}
                 </CardDescription>
               </CardHeader>
               <CardContent>
@@ -122,9 +116,16 @@ export default function DashboardPage() {
                 <Button variant="outline" size="sm" asChild>
                   <Link href={`/polls/${poll.id}`}>View Results</Link>
                 </Button>
-                <Button variant="ghost" size="sm" asChild>
-                  <Link href={`/polls/${poll.id}/share`}>Share</Link>
-                </Button>
+                {user && user.id === poll.user_id && (
+                  <div className="flex gap-2">
+                    <Button variant="outline" size="sm" asChild>
+                      <Link href={`/polls/${poll.id}/edit`}>Edit</Link>
+                    </Button>
+                    <Button variant="destructive" size="sm" onClick={() => handleDelete(poll.id)}>
+                      Delete
+                    </Button>
+                  </div>
+                )}
               </CardFooter>
             </Card>
           ))}

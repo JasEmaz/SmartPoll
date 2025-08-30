@@ -13,10 +13,12 @@ import {
   FormSubmit,
 } from '../../../components/ui/form';
 import { Input } from '../../../components/ui/input';
+import { createClient } from '@/lib/supabase/client';
 
 export default function RegisterPage() {
   const router = useRouter();
   const [error, setError] = useState<string | null>(null);
+  const supabase = createClient();
 
   async function handleSubmit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -33,16 +35,15 @@ export default function RegisterPage() {
     }
     
     try {
-      // TODO: Implement Supabase authentication
-      // const { error } = await supabase.auth.signUp({
-      //   email,
-      //   password,
-      //   options: {
-      //     emailRedirectTo: `${window.location.origin}/auth/callback`,
-      //   },
-      // });
+      const { error } = await supabase.auth.signUp({
+        email,
+        password,
+        options: {
+          emailRedirectTo: `${window.location.origin}/auth/callback`,
+        },
+      });
       
-      // if (error) throw error;
+      if (error) throw error;
       
       // Redirect to login page or confirmation page
       router.push('/auth/login?registered=true');

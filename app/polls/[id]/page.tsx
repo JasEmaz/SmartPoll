@@ -3,6 +3,8 @@
 import { useParams } from 'next/navigation';
 import { useState, useEffect } from 'react';
 import { Button } from '../../../components/ui/button';
+import { createClient } from '@/lib/supabase/client';
+import { useAuth } from '@/app/contexts/auth';
 
 interface PollOption {
   id: string;
@@ -15,78 +17,129 @@ interface Poll {
   question: string;
   options: PollOption[];
   totalVotes: number;
-  createdBy: string;
-  createdAt: string;
+  user_id: string;
+  created_at: string;
 }
+
+const mockPoll: Poll = {
+  id: '1',
+  question: 'What is your favorite programming language?',
+  options: [
+    { id: '1', text: 'JavaScript', votes: 3 },
+    { id: '2', text: 'Python', votes: 5 },
+    { id: '3', text: 'Rust', votes: 2 },
+  ],
+  totalVotes: 10,
+  user_id: 'mock_user',
+  created_at: new Date().toISOString(),
+};
 
 export default function PollPage() {
   const params = useParams();
   const pollId = params.id as string;
+  const supabase = createClient();
+  const { user } = useAuth();
   
   const [poll, setPoll] = useState<Poll | null>(null);
   const [loading, setLoading] = useState(true);
   const [selectedOption, setSelectedOption] = useState<string | null>(null);
   const [hasVoted, setHasVoted] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [checkingVoteStatus, setCheckingVoteStatus] = useState(false);
   
   useEffect(() => {
-    // In a real app, this would fetch from Supabase
-    // For now, we'll use mock data
-    const mockPoll: Poll = {
-      id: pollId,
-      question: 'What is your favorite programming language?',
-      options: [
-        { id: '1', text: 'JavaScript', votes: 42 },
-        { id: '2', text: 'Python', votes: 35 },
-        { id: '3', text: 'TypeScript', votes: 28 },
-        { id: '4', text: 'Rust', votes: 15 },
-      ],
-      totalVotes: 120,
-      createdBy: 'user@example.com',
-      createdAt: new Date().toISOString(),
-    };
+    async function fetchPoll() {
+      try {
+        const { data, error } = await supabase
+          .from('polls')
+          .select('id, question, created_at, user_id, poll_options(*)')
+          .eq('id', pollId)
+          .single();
+        
+        if (error) throw error;
+        
+        const formattedPoll: Poll = {
+          id: data.id,
+          question: data.question,
+          options: data.poll_options.map((option: any) => ({
+            id: option.id,
+            text: option.option_text,
+            votes: option.votes || 0
+          })),
+          totalVotes: data.poll_options.reduce((acc: number, option: any) => acc + (option.votes || 0), 0),
+          user_id: data.user_id,
+          created_at: data.created_at
+        };
+        
+        setPoll(formattedPoll);
+        
+        // Check if user has already voted
+        if (user) {
+          await checkVoteStatus();
+        }
+      } catch (error) {
+        console.error('Error fetching poll:', error);
+        setError('Failed to load poll. Displaying mock data instead.');
+        setPoll(mockPoll);
+      } finally {
+        setLoading(false);
+      }
+    }
     
-    // Simulate API delay
-    setTimeout(() => {
-      setPoll(mockPoll);
-      setLoading(false);
-    }, 500);
+    if (pollId) {
+      fetchPoll();
+    }
+  }, [pollId, supabase, user]);
+
+  const checkVoteStatus = async () => {
+    if (!user || !pollId) return;
     
-    // TODO: Replace with actual Supabase fetch
-    // async function fetchPoll() {
-    //   try {
-    //     const { data, error } = await supabase
-    //       .from('polls')
-    //       .select('*, options(*)')
-    //       .eq('id', pollId)
-    //       .single();
-    //     
-    //     if (error) throw error;
-    //     setPoll(data);
-    //   } catch (error) {
-    //     console.error('Error fetching poll:', error);
-    //     setError('Failed to load poll');
-    //   } finally {
-    //     setLoading(false);
-    //   }
-    // }
-    // 
-    // fetchPoll();
-  }, [pollId]);
+    setCheckingVoteStatus(true);
+    try {
+      const { data, error } = await supabase
+        .from('votes')
+        .select('option_id')
+        .eq('user_id', user.id)
+        .eq('poll_id', pollId)
+        .single();
+      
+      if (!error && data) {
+        setHasVoted(true);
+        setSelectedOption(data.option_id);
+      }
+    } catch (error) {
+      // User hasn't voted yet, which is fine
+    } finally {
+      setCheckingVoteStatus(false);
+    }
+  };
   
   const handleVote = async () => {
     if (!selectedOption) return;
     
+    if (!user) {
+      setError('You must be logged in to vote.');
+      return;
+    }
+
     try {
-      // TODO: Implement Supabase vote submission
-      // const { error } = await supabase.rpc('increment_vote', {
-      //   option_id: selectedOption,
-      //   poll_id: pollId
-      // });
-      // 
-      // if (error) throw error;
+      // Use the increment_vote function to prevent double voting and update vote count atomically
+      const { error } = await supabase.rpc('increment_vote', {
+        option_id: selectedOption,
+        poll_id: pollId,
+        user_id: user.id
+      });
+
+      if (error) {
+        if (error.message.includes('already voted')) {
+          setError('You have already voted on this poll.');
+        } else {
+          throw error;
+        }
+        return;
+      }
       
-      // For now, just update the UI
+      // Update the UI
       if (poll) {
         const updatedOptions = poll.options.map(option => {
           if (option.id === selectedOption) {
@@ -105,11 +158,11 @@ export default function PollPage() {
       }
     } catch (error) {
       console.error('Error submitting vote:', error);
-      setError('Failed to submit vote');
+      setError('Failed to submit vote. Please try again.');
     }
   };
   
-  if (loading) {
+  if (loading || checkingVoteStatus) {
     return (
       <div className="flex justify-center items-center min-h-[50vh]">
         <div className="h-8 w-8 animate-spin rounded-full border-4 border-primary border-t-transparent"></div>
@@ -117,11 +170,21 @@ export default function PollPage() {
     );
   }
   
-  if (error || !poll) {
+  if (!poll) {
     return (
       <div className="text-center py-10">
         <h1 className="text-2xl font-bold text-destructive">
-          {error || 'Poll not found'}
+          Poll not found
+        </h1>
+      </div>
+    );
+  }
+
+  if (error) {
+    return (
+      <div className="text-center py-10">
+        <h1 className="text-2xl font-bold text-destructive">
+          {error}
         </h1>
       </div>
     );
@@ -137,7 +200,7 @@ export default function PollPage() {
       <div className="space-y-2">
         <h1 className="text-3xl font-bold">{poll.question}</h1>
         <p className="text-muted-foreground">
-          Created {new Date(poll.createdAt).toLocaleDateString()}
+          Created {new Date(poll.created_at).toLocaleDateString()}
           {' · '}
           {poll.totalVotes} votes
         </p>
@@ -145,12 +208,20 @@ export default function PollPage() {
       
       {!hasVoted ? (
         <div className="space-y-4">
+          {!user && (
+            <div className="bg-blue-50 text-blue-700 p-4 rounded-md border border-blue-200">
+              <p className="text-sm">
+                Please <a href="/auth/login" className="underline font-medium">log in</a> to vote on this poll.
+              </p>
+            </div>
+          )}
+          
           <div className="space-y-2">
             {poll.options.map((option) => (
               <div 
                 key={option.id}
-                className={`p-4 border rounded-lg cursor-pointer transition-colors ${selectedOption === option.id ? 'border-primary bg-primary/5' : 'hover:bg-accent'}`}
-                onClick={() => setSelectedOption(option.id)}
+                className={`p-4 border rounded-lg cursor-pointer transition-colors ${selectedOption === option.id ? 'border-primary bg-primary/5' : 'hover:bg-accent'} ${!user ? 'opacity-50 cursor-not-allowed' : ''}`}
+                onClick={() => user && setSelectedOption(option.id)}
               >
                 <div className="flex items-center gap-2">
                   <div className={`w-4 h-4 rounded-full border ${selectedOption === option.id ? 'border-4 border-primary' : 'border-muted-foreground'}`}></div>
@@ -160,17 +231,27 @@ export default function PollPage() {
             ))}
           </div>
           
-          <Button 
-            onClick={handleVote} 
-            disabled={!selectedOption}
-            className="w-full"
-          >
-            Submit Vote
-          </Button>
+          {user ? (
+            <Button 
+              onClick={handleVote} 
+              disabled={!selectedOption}
+              className="w-full"
+            >
+              Submit Vote
+            </Button>
+          ) : (
+            <Button 
+              asChild
+              className="w-full"
+            >
+              <a href="/auth/login">Log In to Vote</a>
+            </Button>
+          )}
         </div>
       ) : (
         <div className="space-y-4">
-          <h2 className="text-xl font-semibold">Results</h2>
+          <h2 className="text-xl font-semibold">Thank you for voting!</h2>
+          <h3 className="text-lg font-semibold">Results</h3>
           
           <div className="space-y-3">
             {poll.options.map((option) => {
