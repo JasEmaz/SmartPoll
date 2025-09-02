@@ -7,6 +7,7 @@ CREATE TABLE polls (
   id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
   question TEXT NOT NULL,
   user_id UUID NOT NULL REFERENCES auth.users(id) ON DELETE CASCADE,
+  expires_at TIMESTAMP WITH TIME ZONE,
   created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
   updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
 );
