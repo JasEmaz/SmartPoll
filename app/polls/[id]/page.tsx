@@ -1,8 +1,9 @@
 'use client';
 
 import { useParams } from 'next/navigation';
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { Button } from '../../../components/ui/button';
+import { PollResultChart, SharePoll } from '../../../components/polls';
 import { createClient } from '@/lib/supabase/client';
 import { useAuth } from '@/app/contexts/auth';
 
@@ -46,7 +47,32 @@ export default function PollPage() {
   const [hasVoted, setHasVoted] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [checkingVoteStatus, setCheckingVoteStatus] = useState(false);
+  const [showResults, setShowResults] = useState(false);
+  const [showShare, setShowShare] = useState(false);
   
+  const checkVoteStatus = useCallback(async () => {
+    if (!user || !pollId) return;
+    
+    setCheckingVoteStatus(true);
+    try {
+      const { data, error } = await supabase
+        .from('votes')
+        .select('option_id')
+        .eq('user_id', user.id)
+        .eq('poll_id', pollId)
+        .single();
+      
+      if (!error && data) {
+        setHasVoted(true);
+        setSelectedOption(data.option_id);
+      }
+    } catch {
+      // User hasn't voted yet, which is fine
+    } finally {
+      setCheckingVoteStatus(false);
+    }
+  }, [user, pollId, supabase]);
+
   useEffect(() => {
     async function fetchPoll() {
       try {
@@ -61,12 +87,18 @@ export default function PollPage() {
         const formattedPoll: Poll = {
           id: data.id,
           question: data.question,
-          options: data.poll_options.map((option: any) => ({
+          options: data.poll_options.map((option: {
+            id: string;
+            option_text: string;
+            votes: number | null;
+          }) => ({
             id: option.id,
             text: option.option_text,
             votes: option.votes || 0
           })),
-          totalVotes: data.poll_options.reduce((acc: number, option: any) => acc + (option.votes || 0), 0),
+          totalVotes: data.poll_options.reduce((acc: number, option: {
+            votes: number | null;
+          }) => acc + (option.votes || 0), 0),
           user_id: data.user_id,
           created_at: data.created_at
         };
@@ -89,30 +121,7 @@ export default function PollPage() {
     if (pollId) {
       fetchPoll();
     }
-  }, [pollId, supabase, user]);
-
-  const checkVoteStatus = async () => {
-    if (!user || !pollId) return;
-    
-    setCheckingVoteStatus(true);
-    try {
-      const { data, error } = await supabase
-        .from('votes')
-        .select('option_id')
-        .eq('user_id', user.id)
-        .eq('poll_id', pollId)
-        .single();
-      
-      if (!error && data) {
-        setHasVoted(true);
-        setSelectedOption(data.option_id);
-      }
-    } catch (error) {
-      // User hasn't voted yet, which is fine
-    } finally {
-      setCheckingVoteStatus(false);
-    }
-  };
+  }, [pollId, supabase, user, checkVoteStatus]);
   
   const handleVote = async () => {
     if (!selectedOption) return;
@@ -190,10 +199,7 @@ export default function PollPage() {
     );
   }
   
-  // Calculate percentages for the chart
-  const getPercentage = (votes: number) => {
-    return poll.totalVotes > 0 ? Math.round((votes / poll.totalVotes) * 100) : 0;
-  };
+  // Note: getPercentage function removed as it's not used
   
   return (
     <div className="max-w-3xl mx-auto py-8 space-y-8">
@@ -216,72 +222,114 @@ export default function PollPage() {
             </div>
           )}
           
-          <div className="space-y-2">
-            {poll.options.map((option) => (
-              <div 
-                key={option.id}
-                className={`p-4 border rounded-lg cursor-pointer transition-colors ${selectedOption === option.id ? 'border-primary bg-primary/5' : 'hover:bg-accent'} ${!user ? 'opacity-50 cursor-not-allowed' : ''}`}
-                onClick={() => user && setSelectedOption(option.id)}
-              >
-                <div className="flex items-center gap-2">
-                  <div className={`w-4 h-4 rounded-full border ${selectedOption === option.id ? 'border-4 border-primary' : 'border-muted-foreground'}`}></div>
-                  <span>{option.text}</span>
-                </div>
+          {showResults ? (
+            <>
+              <div className="flex items-center justify-between">
+                <h2 className="text-xl font-semibold">Current Results</h2>
+                <Button 
+                  variant="outline" 
+                  size="sm"
+                  onClick={() => setShowResults(false)}
+                >
+                  Back to Voting
+                </Button>
               </div>
-            ))}
-          </div>
-          
-          {user ? (
-            <Button 
-              onClick={handleVote} 
-              disabled={!selectedOption}
-              className="w-full"
-            >
-              Submit Vote
-            </Button>
+              
+              <PollResultChart 
+                pollResults={{
+                  question: poll.question,
+                  options: poll.options.map(option => ({
+                    ...option,
+                    option_text: option.text
+                  })),
+                  totalVotes: poll.totalVotes,
+                }}
+              />
+            </>
           ) : (
-            <Button 
-              asChild
-              className="w-full"
-            >
-              <a href="/auth/login">Log In to Vote</a>
-            </Button>
+            <>
+              <div className="space-y-2">
+                {poll.options.map((option) => (
+                  <div 
+                    key={option.id}
+                    className={`p-4 border rounded-lg cursor-pointer transition-colors ${selectedOption === option.id ? 'border-primary bg-primary/5' : 'hover:bg-accent'} ${!user ? 'opacity-50 cursor-not-allowed' : ''}`}
+                    onClick={() => user && setSelectedOption(option.id)}
+                  >
+                    <div className="flex items-center gap-2">
+                      <div className={`w-4 h-4 rounded-full border ${selectedOption === option.id ? 'border-4 border-primary' : 'border-muted-foreground'}`}></div>
+                      <span>{option.text}</span>
+                    </div>
+                  </div>
+                ))}
+              </div>
+              
+              {user ? (
+                <Button 
+                  onClick={handleVote} 
+                  disabled={!selectedOption}
+                  className="w-full"
+                >
+                  Submit Vote
+                </Button>
+              ) : (
+                <Button 
+                  asChild
+                  className="w-full"
+                >
+                  <a href="/auth/login">Log In to Vote</a>
+                </Button>
+              )}
+              
+              <div className="flex gap-2">
+                {poll.totalVotes > 0 && (
+                  <Button 
+                    variant="outline" 
+                    onClick={() => setShowResults(true)}
+                    className="flex-1"
+                  >
+                    View Current Results
+                  </Button>
+                )}
+                <Button 
+                  variant="outline" 
+                  onClick={() => setShowShare(!showShare)}
+                  className={poll.totalVotes > 0 ? "flex-1" : "w-full"}
+                >
+                  {showShare ? 'Hide Share' : 'Share Poll'}
+                </Button>
+              </div>
+              {showShare && (
+                <div className="mt-4">
+                  <SharePoll pollId={poll.id} pollQuestion={poll.question} />
+                </div>
+              )}
+            </>
           )}
         </div>
       ) : (
         <div className="space-y-4">
           <h2 className="text-xl font-semibold">Thank you for voting!</h2>
-          <h3 className="text-lg font-semibold">Results</h3>
           
-          <div className="space-y-3">
-            {poll.options.map((option) => {
-              const percentage = getPercentage(option.votes);
-              return (
-                <div key={option.id} className="space-y-1">
-                  <div className="flex justify-between text-sm">
-                    <span>{option.text}</span>
-                    <span className="font-medium">{percentage}%</span>
-                  </div>
-                  <div className="h-2 w-full bg-muted rounded-full overflow-hidden">
-                    <div 
-                      className="h-full bg-primary" 
-                      style={{ width: `${percentage}%` }}
-                    ></div>
-                  </div>
-                  <p className="text-xs text-muted-foreground">{option.votes} votes</p>
-                </div>
-              );
-            })}
-          </div>
+          <PollResultChart 
+            pollResults={{
+              question: poll.question,
+              options: poll.options.map(option => ({
+                ...option,
+                option_text: option.text
+              })),
+              totalVotes: poll.totalVotes,
+            }}
+          />
           
           <div className="flex justify-between pt-4">
-            <Button variant="outline" asChild>
-              <a href={`/polls/${pollId}/share`}>Share Poll</a>
+            <Button variant="outline" onClick={() => setShowShare(!showShare)}>
+              {showShare ? 'Hide Share Options' : 'Share Poll'}
             </Button>
             <Button variant="outline" asChild>
               <a href="/dashboard">Back to Dashboard</a>
             </Button>
           </div>
+          {showShare && <SharePoll pollId={poll.id} pollQuestion={poll.question} />}
         </div>
       )}
     </div>

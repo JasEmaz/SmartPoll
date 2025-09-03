@@ -60,7 +60,10 @@ export default function EditPollPage() {
           return;
         }
 
-        const pollOptions = data.poll_options.map((o: any) => ({ id: o.id, text: o.option_text }));
+        const pollOptions = data.poll_options.map((o: {
+          id: string;
+          option_text: string;
+        }) => ({ id: o.id, text: o.option_text }));
         setQuestion(data.question);
         setOptions(pollOptions);
         setOriginalData({ question: data.question, options: pollOptions });

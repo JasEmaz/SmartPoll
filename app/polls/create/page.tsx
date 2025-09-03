@@ -11,10 +11,10 @@ import {
   FormLabel,
   FormControl,
   FormDescription,
-  FormSubmit,
 } from '../../../components/ui/form';
 import { useAuth } from '@/app/contexts/auth';
 import { createClient } from '@/lib/supabase/client';
+import { SharePoll } from '../../../components/polls';
 
 interface PollOption {
   id: string;
@@ -33,6 +33,8 @@ export default function CreatePollPage() {
   const [expiresAt, setExpiresAt] = useState('');
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState(false);
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const [createdPoll, setCreatedPoll] = useState<{ id: string; question: string } | null>(null);
   
   const addOption = () => {
     const newId = (options.length + 1).toString();
@@ -63,26 +65,31 @@ export default function CreatePollPage() {
   const handleSubmit = async (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     setError(null);
+    setIsSubmitting(true);
     
     if (!user) {
       setError('You must be logged in to create a poll.');
+      setIsSubmitting(false);
       return;
     }
 
     // Validate form
     if (!question.trim()) {
       setError('Please enter a question');
+      setIsSubmitting(false);
       return;
     }
     
     const validOptions = options.filter(option => option.text.trim());
     if (validOptions.length < 2) {
       setError('Please provide at least 2 valid options');
+      setIsSubmitting(false);
       return;
     }
 
     if (expiresAt && new Date(expiresAt) < new Date()) {
       setError('Expiration date cannot be in the past');
+      setIsSubmitting(false);
       return;
     }
     
@@ -112,30 +119,57 @@ export default function CreatePollPage() {
       
       if (optionsError) throw optionsError;
       
+      setCreatedPoll({ id: pollId, question });
       setSuccess(true);
-      setTimeout(() => {
-        router.push('/dashboard?created=true');
-      }, 3000);
     } catch (error) {
       console.error('Error creating poll:', JSON.stringify(error, null, 2));
       setError('Failed to create poll');
+      setIsSubmitting(false);
     }
   };
 
-  if (success) {
+  if (success && createdPoll) {
     return (
-      <div className="max-w-2xl mx-auto py-8 text-center space-y-4">
-        <div className="h-16 w-16 mx-auto bg-green-100 rounded-full flex items-center justify-center">
-          <svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="text-green-600">
-            <path d="M20 6 9 17l-5-5"/>
-          </svg>
+      <div className="max-w-4xl mx-auto py-8 space-y-8">
+        {/* Success Header */}
+        <div className="text-center space-y-4">
+          <div className="h-16 w-16 mx-auto bg-green-100 rounded-full flex items-center justify-center">
+            <svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="text-green-600">
+              <path d="M20 6 9 17l-5-5"/>
+            </svg>
+          </div>
+          <h1 className="text-3xl font-bold text-green-600">Poll Created Successfully!</h1>
+          <p className="text-muted-foreground max-w-2xl mx-auto">
+            Your poll "{createdPoll.question}" is now live and ready to receive votes.
+            Share it with your audience using the options below.
+          </p>
         </div>
-        <h1 className="text-3xl font-bold text-green-600">Poll Created Successfully!</h1>
-        <p className="text-muted-foreground">Your poll has been created and is now live. Redirecting to dashboard...</p>
-        <div className="pt-4">
-          <Button variant="outline" onClick={() => router.push('/dashboard?created=true')}>
-            Go to Dashboard Now
+
+        {/* Action Buttons */}
+        <div className="flex flex-col sm:flex-row gap-4 justify-center">
+          <Button 
+            onClick={() => router.push(`/polls/${createdPoll.id}`)}
+            size="lg"
+          >
+            View Poll
           </Button>
+          <Button 
+            variant="outline" 
+            onClick={() => router.push('/dashboard')}
+            size="lg"
+          >
+            Go to Dashboard
+          </Button>
+        </div>
+
+        {/* Share Section */}
+        <div className="max-w-2xl mx-auto">
+          <SharePoll pollId={createdPoll.id} pollQuestion={createdPoll.question} />
+        </div>
+        
+        {/* Additional Info */}
+        <div className="text-center text-sm text-muted-foreground">
+          <p>Your poll URL: <code className="bg-muted px-2 py-1 rounded">{typeof window !== 'undefined' ? `${window.location.origin}/polls/${createdPoll.id}` : ''}</code></p>
         </div>
       </div>
     )
@@ -231,10 +265,19 @@ export default function CreatePollPage() {
         </div>
         
         <div className="flex justify-end gap-4 mt-8">
-          <Button type="button" variant="outline" onClick={() => router.back()}>
+          <Button type="button" variant="outline" onClick={() => router.back()} disabled={isSubmitting}>
             Cancel
           </Button>
-          <FormSubmit>Create Poll</FormSubmit>
+          <Button type="submit" disabled={isSubmitting}>
+            {isSubmitting ? (
+              <>
+                <div className="mr-2 h-4 w-4 animate-spin rounded-full border-2 border-current border-t-transparent" />
+                Creating...
+              </>
+            ) : (
+              'Create Poll'
+            )}
+          </Button>
         </div>
       </Form>
     </div>

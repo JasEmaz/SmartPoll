@@ -96,9 +96,12 @@ describe('PollResultChart Component', () => {
   test('calculates percentages correctly for zero votes', () => {
     render(<PollResultChart pollResults={emptyPollResults} />);
     
-    // Check that detailed results still show with 0%
-    expect(screen.getByText('0 votes')).toBeInTheDocument();
-    expect(screen.getByText('(0%)')).toBeInTheDocument();
+    // Check that detailed results still show with 0% (multiple elements expected)
+    const zeroVotesElements = screen.getAllByText('0 votes');
+    expect(zeroVotesElements).toHaveLength(2); // Two options with 0 votes each
+    
+    const zeroPercentageElements = screen.getAllByText('(0%)');
+    expect(zeroPercentageElements).toHaveLength(2); // Two options with 0% each
   });
 
   test('handles single option polls correctly', () => {
