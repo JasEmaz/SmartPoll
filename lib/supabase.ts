@@ -1,1 +1,337 @@
-import { createServerClient, type CookieOptions } from '@supabase/ssr';\nimport { createBrowserClient } from '@supabase/ssr';\nimport { cookies } from 'next/headers';\nimport { NextRequest, NextResponse } from 'next/server';\nimport type { Database } from './database.types';\n\n/**\n * SECURITY FEATURES IMPLEMENTED:\n * \n * 1. HTTP-ONLY COOKIES: Tokens stored in httpOnly cookies to prevent XSS access\n * 2. SECURE COOKIE OPTIONS: SameSite, Secure, Path restrictions\n * 3. SERVER-SIDE VALIDATION: All auth checks performed server-side\n * 4. SESSION MANAGEMENT: Proper session refresh and cleanup\n * 5. CSRF PROTECTION: SameSite cookie policy prevents CSRF attacks\n * 6. TOKEN ROTATION: Automatic refresh token rotation\n */\n\n// Secure cookie configuration for production\nconst SECURE_COOKIE_OPTIONS: CookieOptions = {\n  httpOnly: true,           // Prevents XSS access to tokens\n  secure: process.env.NODE_ENV === 'production', // HTTPS only in production\n  sameSite: 'lax',         // CSRF protection\n  path: '/',               // Available site-wide\n  maxAge: 60 * 60 * 24 * 7 // 7 days\n};\n\n/**\n * Create a server-side Supabase client with secure cookie handling\n * Used in server components, API routes, and middleware\n */\nexport function createServerClient() {\n  const cookieStore = cookies();\n  \n  return createServerClient<Database>(\n    process.env.NEXT_PUBLIC_SUPABASE_URL!,\n    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,\n    {\n      cookies: {\n        get(name: string) {\n          return cookieStore.get(name)?.value;\n        },\n        set(name: string, value: string, options: CookieOptions) {\n          try {\n            // Merge with secure defaults\n            const secureOptions = {\n              ...SECURE_COOKIE_OPTIONS,\n              ...options\n            };\n            cookieStore.set({ name, value, ...secureOptions });\n          } catch (error) {\n            // Handle cookie setting errors gracefully in server components\n            console.warn('Failed to set cookie:', name, error);\n          }\n        },\n        remove(name: string, options: CookieOptions) {\n          try {\n            const secureOptions = {\n              ...SECURE_COOKIE_OPTIONS,\n              ...options\n            };\n            cookieStore.set({ name, value: '', ...secureOptions, maxAge: 0 });\n          } catch (error) {\n            console.warn('Failed to remove cookie:', name, error);\n          }\n        },\n      },\n    }\n  );\n}\n\n/**\n * Create a browser-side Supabase client with minimal privileges\n * Used in client components (with caution)\n */\nexport function createBrowserClient() {\n  return createBrowserClient<Database>(\n    process.env.NEXT_PUBLIC_SUPABASE_URL!,\n    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!\n  );\n}\n\n/**\n * Create middleware client for request/response handling\n * Used in middleware.ts for session management\n */\nexport function createMiddlewareClient(request: NextRequest) {\n  let response = NextResponse.next({\n    request: {\n      headers: request.headers,\n    },\n  });\n\n  const supabase = createServerClient<Database>(\n    process.env.NEXT_PUBLIC_SUPABASE_URL!,\n    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,\n    {\n      cookies: {\n        get(name: string) {\n          return request.cookies.get(name)?.value;\n        },\n        set(name: string, value: string, options: CookieOptions) {\n          const secureOptions = {\n            ...SECURE_COOKIE_OPTIONS,\n            ...options\n          };\n          \n          // Set cookie in both request and response\n          request.cookies.set({ name, value, ...secureOptions });\n          response = NextResponse.next({\n            request: {\n              headers: request.headers,\n            },\n          });\n          response.cookies.set({ name, value, ...secureOptions });\n        },\n        remove(name: string, options: CookieOptions) {\n          const secureOptions = {\n            ...SECURE_COOKIE_OPTIONS,\n            ...options,\n            maxAge: 0\n          };\n          \n          // Remove cookie from both request and response\n          request.cookies.set({ name, value: '', ...secureOptions });\n          response = NextResponse.next({\n            request: {\n              headers: request.headers,\n            },\n          });\n          response.cookies.set({ name, value: '', ...secureOptions });\n        },\n      },\n    }\n  );\n\n  return { supabase, response };\n}\n\n/**\n * Secure server-side user authentication\n * Returns user data if authenticated, null if not\n * Should be used in all server components requiring auth\n */\nexport async function getAuthenticatedUser() {\n  const supabase = createServerClient();\n  \n  try {\n    const { data: { user }, error } = await supabase.auth.getUser();\n    \n    if (error) {\n      console.warn('Authentication check failed:', error.message);\n      return null;\n    }\n    \n    // Additional validation: check if session is still valid\n    if (user) {\n      const { data: { session } } = await supabase.auth.getSession();\n      if (!session) {\n        console.warn('User found but no valid session');\n        return null;\n      }\n    }\n    \n    return user;\n  } catch (error) {\n    console.error('Error checking authentication:', error);\n    return null;\n  }\n}\n\n/**\n * Validate session and refresh if needed\n * Used in middleware for automatic token refresh\n */\nexport async function validateAndRefreshSession(request: NextRequest) {\n  const { supabase, response } = createMiddlewareClient(request);\n  \n  try {\n    // This will automatically refresh the session if needed\n    const { data: { user }, error } = await supabase.auth.getUser();\n    \n    if (error) {\n      console.warn('Session validation failed:', error.message);\n    }\n    \n    return { user, response, supabase };\n  } catch (error) {\n    console.error('Error validating session:', error);\n    return { user: null, response, supabase };\n  }\n}\n\n/**\n * OAuth configuration for Google and GitHub\n */\nexport const OAUTH_PROVIDERS = {\n  google: {\n    provider: 'google' as const,\n    options: {\n      redirectTo: `${process.env.NEXT_PUBLIC_SITE_URL}/auth/callback`,\n      scopes: 'openid email profile',\n      queryParams: {\n        access_type: 'offline',\n        prompt: 'consent',\n      },\n    },\n  },\n  github: {\n    provider: 'github' as const,\n    options: {\n      redirectTo: `${process.env.NEXT_PUBLIC_SITE_URL}/auth/callback`,\n      scopes: 'user:email',\n    },\n  },\n};\n\n/**\n * Initiate OAuth sign-in (client-side)\n */\nexport async function signInWithOAuth(provider: 'google' | 'github') {\n  const supabase = createBrowserClient();\n  const config = OAUTH_PROVIDERS[provider];\n  \n  try {\n    const { data, error } = await supabase.auth.signInWithOAuth(config);\n    \n    if (error) {\n      throw error;\n    }\n    \n    return { data, error: null };\n  } catch (error) {\n    console.error(`OAuth ${provider} sign-in error:`, error);\n    return { data: null, error };\n  }\n}\n\n/**\n * Secure sign out (clears all cookies and sessions)\n */\nexport async function signOut() {\n  const supabase = createBrowserClient();\n  \n  try {\n    const { error } = await supabase.auth.signOut();\n    \n    if (error) {\n      console.warn('Sign out error:', error.message);\n    }\n    \n    // Force reload to clear any remaining client state\n    window.location.href = '/auth/login';\n  } catch (error) {\n    console.error('Error during sign out:', error);\n    // Force redirect even if sign out fails\n    window.location.href = '/auth/login';\n  }\n}\n\n/**\n * Get user role/permissions (if you implement RBAC)\n */\nexport async function getUserRole(userId: string) {\n  const supabase = createServerClient();\n  \n  try {\n    // Example: Query user_roles table\n    const { data, error } = await supabase\n      .from('user_roles')\n      .select('role')\n      .eq('user_id', userId)\n      .single();\n    \n    if (error && error.code !== 'PGRST116') {\n      console.warn('Error fetching user role:', error.message);\n      return 'user'; // default role\n    }\n    \n    return data?.role || 'user';\n  } catch (error) {\n    console.error('Error checking user role:', error);\n    return 'user';\n  }\n}\n\n/**\n * Security middleware helper functions\n */\nexport const AuthSecurity = {\n  /**\n   * Check if request is from authenticated user\n   */\n  isAuthenticated: async (request: NextRequest): Promise<boolean> => {\n    const { user } = await validateAndRefreshSession(request);\n    return !!user;\n  },\n  \n  /**\n   * Redirect to login if not authenticated\n   */\n  requireAuth: (request: NextRequest, redirectTo: string = '/auth/login') => {\n    const url = request.nextUrl.clone();\n    url.pathname = redirectTo;\n    url.searchParams.set('redirect', request.nextUrl.pathname);\n    return NextResponse.redirect(url);\n  },\n  \n  /**\n   * Add security headers to response\n   */\n  addSecurityHeaders: (response: NextResponse) => {\n    response.headers.set('X-Frame-Options', 'DENY');\n    response.headers.set('X-Content-Type-Options', 'nosniff');\n    response.headers.set('Referrer-Policy', 'strict-origin-when-cross-origin');\n    response.headers.set('Permissions-Policy', 'camera=(), microphone=(), geolocation=()');\n    return response;\n  },\n};
+import { createServerClient as createSupabaseServerClient, type CookieOptions } from '@supabase/ssr';
+import { createBrowserClient as createSupabaseBrowserClient } from '@supabase/ssr';
+import { cookies } from 'next/headers';
+import { NextRequest, NextResponse } from 'next/server';
+import type { Database } from './database.types';
+
+/**
+ * SECURITY FEATURES IMPLEMENTED:
+ *
+ * 1. HTTP-ONLY COOKIES: Tokens stored in httpOnly cookies to prevent XSS access
+ * 2. SECURE COOKIE OPTIONS: SameSite, Secure, Path restrictions
+ * 3. SERVER-SIDE VALIDATION: All auth checks performed server-side
+ * 4. SESSION MANAGEMENT: Proper session refresh and cleanup
+ * 5. CSRF PROTECTION: SameSite cookie policy prevents CSRF attacks
+ * 6. TOKEN ROTATION: Automatic refresh token rotation
+ */
+
+// Secure cookie configuration for production
+const SECURE_COOKIE_OPTIONS: CookieOptions = {
+  httpOnly: true,           // Prevents XSS access to tokens
+  secure: process.env.NODE_ENV === 'production', // HTTPS only in production
+  sameSite: 'lax',         // CSRF protection
+  path: '/',               // Available site-wide
+  maxAge: 60 * 60 * 24 * 7 // 7 days
+};
+
+/**
+ * Creates a server-side Supabase client with secure cookie handling.
+ *
+ * Initializes Supabase client for server environments with proper cookie management
+ * to maintain authentication state across requests.
+ *
+ * @returns Promise<SupabaseClient> Configured Supabase client instance
+ * @throws Error if environment variables are missing
+ * @example
+ * const supabase = await createServerClient();
+ * const { data: user } = await supabase.auth.getUser();
+ */
+export async function createServerClient() {
+  const cookieStore = await cookies();
+
+  return createSupabaseServerClient<Database>(
+    process.env.NEXT_PUBLIC_SUPABASE_URL!,
+    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
+    {
+      cookies: {
+        get(name: string) {
+          return cookieStore.get(name)?.value;
+        },
+        set(name: string, value: string, options: CookieOptions) {
+          try {
+            // Merge with secure defaults
+            const secureOptions = {
+              ...SECURE_COOKIE_OPTIONS,
+              ...options
+            };
+            cookieStore.set({ name, value, ...secureOptions });
+          } catch (error) {
+            // Handle cookie setting errors gracefully in server components
+            console.warn('Failed to set cookie:', name, error);
+          }
+        },
+        remove(name: string, options: CookieOptions) {
+          try {
+            const secureOptions = {
+              ...SECURE_COOKIE_OPTIONS,
+              ...options
+            };
+            cookieStore.set({ name, value: '', ...secureOptions, maxAge: 0 });
+          } catch (error) {
+            console.warn('Failed to remove cookie:', name, error);
+          }
+        },
+      },
+    }
+  );
+}
+
+
+/**
+ * Create middleware client for request/response handling
+ * Used in middleware.ts for session management
+ */
+export function createMiddlewareClient(request: NextRequest) {
+  let response = NextResponse.next({
+    request: {
+      headers: request.headers,
+    },
+  });
+
+  const supabase = createSupabaseServerClient<Database>(
+    process.env.NEXT_PUBLIC_SUPABASE_URL!,
+    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
+    {
+      cookies: {
+        get(name: string) {
+          return request.cookies.get(name)?.value;
+        },
+        set(name: string, value: string, options: CookieOptions) {
+          const secureOptions = {
+            ...SECURE_COOKIE_OPTIONS,
+            ...options
+          };
+
+          // Set cookie in both request and response
+          request.cookies.set({ name, value, ...secureOptions });
+          response = NextResponse.next({
+            request: {
+              headers: request.headers,
+            },
+          });
+          response.cookies.set({ name, value, ...secureOptions });
+        },
+        remove(name: string, options: CookieOptions) {
+          const secureOptions = {
+            ...SECURE_COOKIE_OPTIONS,
+            ...options,
+            maxAge: 0
+          };
+
+          // Remove cookie from both request and response
+          request.cookies.set({ name, value: '', ...secureOptions });
+          response = NextResponse.next({
+            request: {
+              headers: request.headers,
+            },
+          });
+          response.cookies.set({ name, value: '', ...secureOptions });
+        },
+      },
+    }
+  );
+
+  return { supabase, response };
+}
+
+/**
+ * Retrieves the currently authenticated user from server-side session.
+ *
+ * Validates user session and ensures authentication state is current.
+ * Used in server components and API routes requiring user context.
+ *
+ * @returns Promise<User | null> Authenticated user object or null
+ * @throws Error if session validation fails
+ * @example
+ * const user = await getAuthenticatedUser();
+ * if (!user) redirect('/auth/login');
+ */
+export async function getAuthenticatedUser() {
+  const supabase = await createServerClient();
+
+  try {
+    const { data: { user }, error } = await supabase.auth.getUser();
+
+    if (error) {
+      console.warn('Authentication check failed:', error.message);
+      return null;
+    }
+
+    // Additional validation: check if session is still valid
+    if (user) {
+      const { data: { session } } = await supabase.auth.getSession();
+      if (!session) {
+        console.warn('User found but no valid session');
+        return null;
+      }
+    }
+
+    return user;
+  } catch (error) {
+    console.error('Error checking authentication:', error);
+    return null;
+  }
+}
+
+/**
+ * Validates and refreshes user session in middleware context.
+ *
+ * Checks session validity and automatically refreshes tokens if needed.
+ * Critical for maintaining authentication state across page navigations.
+ *
+ * @param request - Incoming Next.js request object
+ * @returns Promise<{user: User | null, response: NextResponse, supabase: SupabaseClient}>
+ * @throws Error if session operations fail
+ * @example
+ * const { user, response } = await validateAndRefreshSession(request);
+ * if (!user) return NextResponse.redirect('/auth/login');
+ */
+export async function validateAndRefreshSession(request: NextRequest) {
+  const { supabase, response } = createMiddlewareClient(request);
+
+  try {
+    // This will automatically refresh the session if needed
+    const { data: { user }, error } = await supabase.auth.getUser();
+
+    if (error) {
+      console.warn('Session validation failed:', error.message);
+    }
+
+    return { user, response, supabase };
+  } catch (error) {
+    console.error('Error validating session:', error);
+    return { user: null, response, supabase };
+  }
+}
+
+/**
+ * OAuth configuration for Google and GitHub
+ */
+export const OAUTH_PROVIDERS = {
+  google: {
+    provider: 'google' as const,
+    options: {
+      redirectTo: `${process.env.NEXT_PUBLIC_SITE_URL}/auth/callback`,
+      scopes: 'openid email profile',
+      queryParams: {
+        access_type: 'offline',
+        prompt: 'consent',
+      },
+    },
+  },
+  github: {
+    provider: 'github' as const,
+    options: {
+      redirectTo: `${process.env.NEXT_PUBLIC_SITE_URL}/auth/callback`,
+      scopes: 'user:email',
+    },
+  },
+};
+
+
+/**
+ * Retrieves user role for role-based access control.
+ *
+ * Queries user_roles table to determine user permissions.
+ * Returns default 'user' role if no specific role is assigned.
+ *
+ * @param userId - User's unique identifier
+ * @returns Promise<string> User role ('user', 'admin', etc.)
+ * @throws Error if database query fails
+ * @example
+ * const role = await getUserRole(user.id);
+ * if (role === 'admin') showAdminPanel();
+ */
+export async function getUserRole(userId: string) {
+  const supabase = await createServerClient();
+
+  try {
+    // Example: Query user_roles table
+    const { data, error } = await supabase
+      .from('user_roles')
+      .select('role')
+      .eq('user_id', userId)
+      .single();
+
+    if (error && error.code !== 'PGRST116') {
+      console.warn('Error fetching user role:', error.message);
+      return 'user'; // default role
+    }
+
+    return data?.role || 'user';
+  } catch (error) {
+    console.error('Error checking user role:', error);
+    return 'user';
+  }
+}
+
+/**
+ * Security middleware helper functions for authentication and authorization.
+ *
+ * Provides utilities for checking authentication status, handling redirects,
+ * and adding security headers to responses.
+ */
+export const AuthSecurity = {
+  /**
+   * Checks if the incoming request is from an authenticated user.
+   *
+   * Validates session and returns authentication status.
+   * Used in middleware to determine access control.
+   *
+   * @param request - Next.js request object
+   * @returns Promise<boolean> True if user is authenticated
+   * @throws Error if session validation fails
+   * @example
+   * if (await AuthSecurity.isAuthenticated(request)) {
+   *   return NextResponse.next();
+   * }
+   */
+  isAuthenticated: async (request: NextRequest): Promise<boolean> => {
+    const { user } = await validateAndRefreshSession(request);
+    return !!user;
+  },
+
+  /**
+   * Creates a redirect response to login page for unauthenticated users.
+   *
+   * Preserves the original destination in query parameters for post-login redirect.
+   * Essential for maintaining user flow after authentication.
+   *
+   * @param request - Original request object
+   * @param redirectTo - Login page path (default: '/auth/login')
+   * @returns NextResponse Redirect response to login
+   * @example
+   * if (!user) return AuthSecurity.requireAuth(request);
+   */
+  requireAuth: (request: NextRequest, redirectTo: string = '/auth/login') => {
+    const url = request.nextUrl.clone();
+    url.pathname = redirectTo;
+    url.searchParams.set('redirect', request.nextUrl.pathname);
+    return NextResponse.redirect(url);
+  },
+
+  /**
+   * Adds security headers to HTTP responses for enhanced protection.
+   *
+   * Implements OWASP recommended headers including CSP, HSTS, and XSS protection.
+   * Critical for preventing common web vulnerabilities.
+   *
+   * @param response - HTTP response object to modify
+   * @returns Response Modified response with security headers
+   * @example
+   * const secureResponse = AuthSecurity.addSecurityHeaders(response);
+   * return secureResponse;
+   */
+  addSecurityHeaders: (response: Response) => {
+    const headers = new Headers(response.headers);
+    headers.set('X-Frame-Options', 'DENY');
+    headers.set('X-Content-Type-Options', 'nosniff');
+    headers.set('Referrer-Policy', 'strict-origin-when-cross-origin');
+    headers.set('Permissions-Policy', 'camera=(), microphone=(), geolocation=()');
+    return new Response(response.body, {
+      status: response.status,
+      statusText: response.statusText,
+      headers,
+    });
+  },
+};

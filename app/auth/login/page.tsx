@@ -12,20 +12,22 @@ import {
 } from '../../../components/ui/form';
 import { Input } from '../../../components/ui/input';
 import { Button } from '../../../components/ui/button';
-import { createBrowserClient, signInWithOAuth } from '@/lib/supabase';
+import { createBrowserClient, signInWithOAuth } from '@/lib/supabase-client';
 import { Github } from 'lucide-react';
 import { ErrorSanitizer } from '@/lib/security';
 
 /**
- * SECURITY FEATURES:
- * 
- * 1. SECURE AUTHENTICATION: Server-side session validation
- * 2. OAUTH INTEGRATION: Google and GitHub OAuth providers
- * 3. REDIRECT HANDLING: Preserves intended destination
- * 4. ERROR SANITIZATION: Safe error messages for users
- * 5. RATE LIMITING: Prevents brute force attacks (via Supabase)
+ * Login page component for user authentication.
+ *
+ * Provides a secure login interface with email/password and OAuth options.
+ * Handles user authentication, error management, and post-login redirects.
+ *
+ * @returns React component for the login page
+ * @throws Redirects to dashboard on successful authentication
+ * @example
+ * // Accessed via /auth/login?redirect=/dashboard
+ * <LoginPage />
  */
-
 export default function LoginPage() {
   const router = useRouter();
   const searchParams = useSearchParams();
@@ -44,6 +46,21 @@ export default function LoginPage() {
     }
   }, [registered]);
 
+  /**
+   * Handles form submission for email/password login.
+   *
+   * Validates credentials, performs authentication, and handles redirects.
+   * Sanitizes errors for security and provides user-friendly messages.
+   *
+   * @param event - Form submission event
+   * @throws Redirects on successful login, sets error state on failure
+   * @example
+   * <form onSubmit={handleSubmit}>
+   *   <input name="email" type="email" />
+   *   <input name="password" type="password" />
+   *   <button type="submit">Login</button>
+   * </form>
+   */
   async function handleSubmit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
     setError(null);
@@ -82,6 +99,19 @@ export default function LoginPage() {
     }
   }
   
+  /**
+   * Initiates OAuth authentication flow for specified provider.
+   *
+   * Redirects user to OAuth provider for authentication.
+   * Handles loading states and error reporting.
+   *
+   * @param provider - OAuth provider ('google' or 'github')
+   * @throws Sets error state if OAuth initiation fails
+   * @example
+   * <button onClick={() => handleOAuthSignIn('google')}>
+   *   Sign in with Google
+   * </button>
+   */
   async function handleOAuthSignIn(provider: 'google' | 'github') {
     setError(null);
     setOauthLoading(provider);

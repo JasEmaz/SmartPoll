@@ -12,7 +12,7 @@ import {
   FormSubmit,
 } from '../../../components/ui/form';
 import { Input } from '../../../components/ui/input';
-import { createBrowserClient } from '@/lib/supabase';
+import { createBrowserClient } from '@/lib/supabase-client';
 import { ErrorSanitizer } from '@/lib/security';
 
 export default function RegisterPage() {

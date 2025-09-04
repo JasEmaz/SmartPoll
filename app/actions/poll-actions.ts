@@ -2,16 +2,8 @@
 
 import { revalidatePath } from 'next/cache';
 import { redirect } from 'next/navigation';
+import type { PollData } from './poll-types';
 
-// Export types from our centralized types module
-export type {
-  PollOption,
-  PollData,
-  Poll,
-  UserPoll,
-  ApiResponse,
-  VoteStatus
-} from './poll-types';
 
 // Import functionality from modular components
 import {
@@ -24,8 +16,6 @@ import {
   checkVoteStatusOperation
 } from './poll-operations';
 
-// Re-export error handling utilities for convenience
-export { createSuccessResponse, createErrorResponse } from './poll-errors';
 
 /**
  * Create a new poll

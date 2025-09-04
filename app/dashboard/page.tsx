@@ -83,7 +83,7 @@ export default async function DashboardPage({ searchParams }: DashboardPageProps
     );
   }
 
-  const { ongoingPolls, expiredPolls } = pollsResult;
+  const { ongoingPolls, expiredPolls } = pollsResult.data!;
   const hasPolls = ongoingPolls.length > 0 || expiredPolls.length > 0;
 
   const formatExpiryDate = (expiresAt: string | null) => {
