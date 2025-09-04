@@ -12,43 +12,72 @@ import {
   FormSubmit,
 } from '../../../components/ui/form';
 import { Input } from '../../../components/ui/input';
-import { createClient } from '@/lib/supabase/client';
+import { createBrowserClient } from '@/lib/supabase';
+import { ErrorSanitizer } from '@/lib/security';
 
 export default function RegisterPage() {
   const router = useRouter();
   const [error, setError] = useState<string | null>(null);
-  const supabase = createClient();
+  const [isLoading, setIsLoading] = useState(false);
+  const supabase = createBrowserClient();
 
   async function handleSubmit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
     setError(null);
+    setIsLoading(true);
     
     const formData = new FormData(event.currentTarget);
     const email = formData.get('email') as string;
     const password = formData.get('password') as string;
     const confirmPassword = formData.get('confirmPassword') as string;
     
+    // Client-side validation
     if (password !== confirmPassword) {
       setError('Passwords do not match');
+      setIsLoading(false);
+      return;
+    }
+    
+    if (password.length < 8) {
+      setError('Password must be at least 8 characters long');
+      setIsLoading(false);
       return;
     }
     
     try {
-      const { error } = await supabase.auth.signUp({
+      const { data, error } = await supabase.auth.signUp({
         email,
         password,
         options: {
-          emailRedirectTo: `${window.location.origin}/auth/callback`,
+          emailRedirectTo: `${process.env.NEXT_PUBLIC_SITE_URL || window.location.origin}/auth/callback`,
         },
       });
       
-      if (error) throw error;
+      if (error) {
+        // Handle specific error cases
+        if (error.message.includes('User already registered')) {
+          setError('An account with this email already exists. Please login instead.');
+        } else if (error.message.includes('Password should be at least')) {
+          setError('Password should be at least 6 characters long');
+        } else {
+          setError(ErrorSanitizer.sanitizeError(error));
+        }
+        return;
+      }
       
-      // Redirect to login page or confirmation page
-      router.push('/auth/login?registered=true');
+      // Successful registration
+      if (data.user && !data.session) {
+        // Email confirmation required
+        router.push('/auth/login?registered=true');
+      } else if (data.session) {
+        // Auto sign-in successful (if confirmation disabled)
+        router.push('/dashboard');
+      }
     } catch (error) {
       console.error('Registration error:', error);
-      setError('Error creating account');
+      setError('An error occurred during registration. Please try again.');
+    } finally {
+      setIsLoading(false);
     }
   }
 
@@ -105,7 +134,9 @@ export default function RegisterPage() {
           </FormControl>
         </FormItem>
         
-        <FormSubmit className="w-full">Register</FormSubmit>
+        <FormSubmit className="w-full" disabled={isLoading}>
+          {isLoading ? 'Creating account...' : 'Register'}
+        </FormSubmit>
       </Form>
       
       <div className="text-center text-sm">

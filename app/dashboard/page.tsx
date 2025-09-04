@@ -1,4 +1,5 @@
 import Link from 'next/link';
+import { redirect } from 'next/navigation';
 import { Button } from '../../components/ui/button';
 import {
   Card,
@@ -9,9 +10,11 @@ import {
   CardFooter,
 } from '../../components/ui/card';
 import { DashboardSharePoll } from '@/components/polls/DashboardSharePoll';
-import { getUserPolls, deletePoll } from '@/app/actions/poll-actions';
+import { getUserPolls } from '@/app/actions/poll-actions';
 import { DeletePollButton } from '@/components/polls/DeletePollButton';
-import { Clock, CheckCircle2 } from 'lucide-react';
+import { Clock, CheckCircle2, LogOut, User } from 'lucide-react';
+import { getAuthenticatedUser } from '@/lib/supabase';
+import { LogoutButton } from '@/components/auth/LogoutButton';
 
 interface Poll {
   id: string;
@@ -28,25 +31,52 @@ interface DashboardPageProps {
   searchParams: { created?: string };
 }
 
+/**
+ * SECURITY IMPLEMENTATION:
+ * 
+ * 1. SERVER-SIDE AUTHENTICATION: getAuthenticatedUser() validates session server-side
+ * 2. AUTOMATIC REDIRECT: Unauthenticated users redirected to login
+ * 3. USER CONTEXT: User data available throughout component
+ * 4. SECURE DATA FETCHING: All data fetched with authenticated context
+ */
+
 export default async function DashboardPage({ searchParams }: DashboardPageProps) {
+  // SECURITY: Server-side authentication check
+  const user = await getAuthenticatedUser();
+  
+  // Redirect if not authenticated (defense in depth - middleware should handle this)
+  if (!user) {
+    redirect('/auth/login?redirect=/dashboard');
+  }
+  
   const createdPoll = searchParams.created;
   
-  // Fetch polls on the server
+  // Fetch polls on the server with authenticated context
   const pollsResult = await getUserPolls();
   
   if (!pollsResult.success) {
     return (
       <div className="space-y-6">
+        {/* Header with user info and logout */}
         <div className="flex items-center justify-between">
-          <h1 className="text-3xl font-bold text-gray-900">Your Polls</h1>
-          <Button asChild>
-            <Link href="/polls/create">Create New Poll</Link>
-          </Button>
+          <div className="flex items-center gap-4">
+            <h1 className="text-3xl font-bold text-gray-900">Your Polls</h1>
+            <div className="flex items-center gap-2 px-3 py-1 bg-gray-100 rounded-full">
+              <User className="h-4 w-4 text-gray-600" />
+              <span className="text-sm text-gray-600">{user.email}</span>
+            </div>
+          </div>
+          <div className="flex items-center gap-3">
+            <Button asChild>
+              <Link href="/polls/create">Create New Poll</Link>
+            </Button>
+            <LogoutButton />
+          </div>
         </div>
         <div className="text-center py-12 space-y-4">
           <h2 className="text-xl font-semibold text-red-600">Error Loading Polls</h2>
           <p className="text-muted-foreground">
-            {pollsResult.error || 'Failed to load your polls. Please try again.'}
+            Failed to load your polls. Please try again.
           </p>
         </div>
       </div>
@@ -182,11 +212,21 @@ export default async function DashboardPage({ searchParams }: DashboardPageProps
 
   return (
     <div className="space-y-8">
+      {/* Header with user info and logout */}
       <div className="flex items-center justify-between">
-        <h1 className="text-3xl font-bold text-gray-900">Your Polls</h1>
-        <Button asChild className="bg-green-600 hover:bg-green-700 text-white">
-          <Link href="/polls/create">Create New Poll</Link>
-        </Button>
+        <div className="flex items-center gap-4">
+          <h1 className="text-3xl font-bold text-gray-900">Your Polls</h1>
+          <div className="flex items-center gap-2 px-3 py-1 bg-green-100 rounded-full">
+            <User className="h-4 w-4 text-green-600" />
+            <span className="text-sm text-green-600 font-medium">{user.email}</span>
+          </div>
+        </div>
+        <div className="flex items-center gap-3">
+          <Button asChild className="bg-green-600 hover:bg-green-700 text-white">
+            <Link href="/polls/create">Create New Poll</Link>
+          </Button>
+          <LogoutButton />
+        </div>
       </div>
       
       {createdPoll && (
